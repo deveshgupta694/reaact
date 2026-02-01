@@ -1,0 +1,203 @@
+React Fiber Architecture
+
+Introduction
+
+React Fiber is an implementation of React's core algorithm.
+
+The goal of React Fiber is to increase its suitability for areas like animation, layout, and gestures. 
+
+Its headline feature is incremental rendering: the ability to split rendering work into chunks and spread it out over multiple frames.
+
+Other key features include :
+
+-> the ability to pause, abort, or reuse work as new updates come in; 
+-> the ability to assign priority to different types of updates;
+-> and new concurrency primitives.
+-> improved hidration ability
+
+
+## My goal is that after reading this document, you will understand Fiber well enough 
+    to follow along as it's implemented, and eventually even be able to contribute back to React.
+
+
+Prerequisites : 
+
+React Components, Elements, and Instances 
+Reconciliation - recursive algorithm to check what to update what not to update
+React Basic Theoretical Concepts - 
+React Design Principles -
+
+
+
+Before we dive into the new stuff, let's review a few concepts.
+
+What is reconciliation?
+The algorithm React uses to differentiate one tree(Browser ka tree) with another(React ka tree) to determine which parts need to be changed.
+
+update?
+A change in the data used to render a React app. Usually the result of `setState`. 
+Eventually results in a re-render.
+The central idea of React's API is to think of updates as if they cause the entire app to re-render. 
+This allows the developer to reason declaratively, rather than worry about how to efficiently transition the app from any particular state to another (A to B, B to C, C to A, and so on).
+
+Actually re-rendering the entire app on each change only works for the most trivial apps; 
+in a real-world app, it's prohibitively costly in terms of performance. 
+React has optimizations which create the appearance of whole app re-rendering while maintaining great performance.
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Reconciliation is the algorithm behind what is popularly understood as the "virtual DOM." 
+
+A high-level description goes something like this: 
+when you render a React application, a tree of nodes that describes the app is generated 
+and saved in memory. This tree is then flushed to the rendering environment 
+— for example, in the case of a browser application, it's translated to a set of DOM operations.
+When the app is updated (usually via setState), a new tree is generated. 
+The new tree is differentiate with the previous tree to compute which operations are needed to update the rendered app.
+
+Although Fiber is a ground-up rewrite of the reconciler, 
+the high-level algorithm described in the React docs will be largely the same. 
+
+The key points are:
+
+Different component types are assumed to generate substantially different trees. 
+React will not attempt to diff them, but rather replace the old tree completely.
+Diffing of lists is performed using keys. 
+Keys should be "stable, predictable, and unique."
+
+
+
+The key points are:
+
+-> In a UI, it's not necessary for every update to be applied immediately; 
+in fact, doing so can be wasteful, causing frames to drop and degrading the user experience.
+
+-> Different types of updates have different priorities — an animation update needs to complete more quickly than, 
+say, an update from a data store.
+
+-> A push-based approach requires the app (you, the programmer) to decide how to schedule work. 
+
+-> A pull-based approach allows the framework (React) to be smart and make those decisions for you.
+React doesn't currently take advantage of scheduling in a significant way; 
+an update results in the entire subtree being re-rendered immediately. 
+Overhauling React's core algorithm to take advantage of scheduling is the driving idea behind Fiber.
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Now we're ready to dive into Fiber's implementation. 
+
+What is a fiber?
+
+We're about to discuss the heart of React Fiber's architecture. 
+Fibers are a much lower-level abstraction than application developers typically think about. 
+If you find yourself frustrated in your attempts to understand it, don't feel discouraged. 
+Keep trying and it will eventually make sense. 
+(When you do finally get it, please suggest how to improve this section.)
+
+Here we go!
+
+We've established that a primary goal of Fiber is to enable React to take advantage of scheduling. 
+Specifically, we need to be able to :
+
+-> pause work and come back to it later.
+-> assign priority to different types of work.
+-> reuse previously completed work.
+-> abort work if it's no longer needed.
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Structure of a fiber : 
+
+
+Note: as we get more specific about implementation details, the likelihood that something may change increases. Please file a PR if you notice any mistakes or outdated information.
+
+In concrete terms, a fiber is a JavaScript object that contains information about a component, its input, and its output.
+
+A fiber corresponds to a stack frame, but it also corresponds to an instance of a component.
+
+Here are some of the important fields that belong to a fiber. (This list is not exhaustive.)
+
+type and key
+The type and key of a fiber serve the same purpose as they do for React elements. (In fact, when a fiber is created from an element, these two fields are copied over directly.)
+
+The type of a fiber describes the component that it corresponds to. For composite components, the type is the function or class component itself. For host components (div, span, etc.), the type is a string.
+
+Conceptually, the type is the function (as in v = f(d)) whose execution is being tracked by the stack frame.
+
+Along with the type, the key is used during reconciliation to determine whether the fiber can be reused.
+
+child and sibling
+These fields point to other fibers, describing the recursive tree structure of a fiber.
+
+The child fiber corresponds to the value returned by a component's render method. So in the following example
+
+function Parent() {
+  return <Child />
+}
+The child fiber of Parent corresponds to Child.
+
+The sibling field accounts for the case where render returns multiple children (a new feature in Fiber!):
+
+function Parent() {
+  return [<Child1 />, <Child2 />]
+}
+The child fibers form a singly-linked list whose head is the first child. So in this example, the child of Parent is Child1 and the sibling of Child1 is Child2.
+
+Going back to our function analogy, you can think of a child fiber as a tail-called function.
+
+return
+The return fiber is the fiber to which the program should return after processing the current one. It is conceptually the same as the return address of a stack frame. It can also be thought of as the parent fiber.
+
+If a fiber has multiple child fibers, each child fiber's return fiber is the parent. So in our example in the previous section, the return fiber of Child1 and Child2 is Parent.
+
+pendingProps and memoizedProps
+Conceptually, props are the arguments of a function. A fiber's pendingProps are set at the beginning of its execution, and memoizedProps are set at the end.
+
+When the incoming pendingProps are equal to memoizedProps, it signals that the fiber's previous output can be reused, preventing unnecessary work.
+
+pendingWorkPriority
+A number indicating the priority of the work represented by the fiber. The ReactPriorityLevel module lists the different priority levels and what they represent.
+
+With the exception of NoWork, which is 0, a larger number indicates a lower priority. For example, you could use the following function to check if a fiber's priority is at least as high as the given level:
+
+function matchesPriority(fiber, priority) {
+  return fiber.pendingWorkPriority !== 0 &&
+         fiber.pendingWorkPriority <= priority
+}
+This function is for illustration only; it's not actually part of the React Fiber codebase.
+
+The scheduler uses the priority field to search for the next unit of work to perform. This algorithm will be discussed in a future section.
+
+alternate
+flush
+To flush a fiber is to render its output onto the screen.
+work-in-progress
+A fiber that has not yet completed; conceptually, a stack frame which has not yet returned.
+At any time, a component instance has at most two fibers that correspond to it: the current, flushed fiber, and the work-in-progress fiber.
+
+The alternate of the current fiber is the work-in-progress, and the alternate of the work-in-progress is the current fiber.
+
+A fiber's alternate is created lazily using a function called cloneFiber. Rather than always creating a new object, cloneFiber will attempt to reuse the fiber's alternate if it exists, minimizing allocations.
+
+You should think of the alternate field as an implementation detail, but it pops up often enough in the codebase that it's valuable to discuss it here.
+
+output
+host component
+The leaf nodes of a React application. They are specific to the rendering environment (e.g., in a browser app, they are `div`, `span`, etc.). In JSX, they are denoted using lowercase tag names.
+Conceptually, the output of a fiber is the return value of a function.
+
+Every fiber eventually has output, but output is created only at the leaf nodes by host components. The output is then transferred up the tree.
+
+The output is what is eventually given to the renderer so that it can flush the changes to the rendering environment. It's the renderer's responsibility to define how the output is created and updated.
+
+Future sections
+That's all there is for now, but this document is nowhere near complete. Future sections will describe the algorithms used throughout the lifecycle of an update. Topics to cover include:
+
+how the scheduler finds the next unit of work to perform.
+how priority is tracked and propagated through the fiber tree.
+how the scheduler knows when to pause and resume work.
+how work is flushed and marked as complete.
+how side-effects (such as lifecycle methods) work.
+what a coroutine is and how it can be used to implement features like context and layout.
