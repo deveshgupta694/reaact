@@ -11,7 +11,27 @@ function App() {
   
 const addValue = () => {
   if(counter < 20)
-  setCounter(counter + 1)
+  {
+    // setCounter(counter + 1) 
+    // setCounter(counter + 1)
+    // setCounter(counter + 1)
+    // setCounter(counter + 1)
+
+    // +1 => +1
+
+    //execution of all will be treated a one single battch 
+
+    //to make work differentlt
+
+    //thinks to know
+    //setCounter method has a call back which hay the abilty to use the previous valsue
+
+    setCounter((prevCounter) => prevCounter + 1)
+    setCounter((prevCounter) => prevCounter + 1)
+    setCounter((prevCounter) => prevCounter + 1)
+
+    // +1 => +3
+  }
   console.log("Value added" , new Date().toLocaleTimeString())
 }
 
